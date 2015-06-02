@@ -27,10 +27,10 @@ typedef struct _ethhdr
 }ETHHDR,*PETHHDR;
 typedef struct _arphdr
 {
-	uint16_t  ht;		//hardware type
-	uint16_t  pt;		//protocol type
-	uint8_t hl;		//hardware length
-	uint8_t pl;		//protocol length
+	uint8_t  ht;		//hardware type
+	uint8_t  pt;		//protocol type
+	uint16_t hl;		//hardware length
+	uint16_t pl;		//protocol length
 	uint16_t op;		//arp/rarp operation
 	uint8_t  s_eth[6];//sender ethernet address
 	uint8_t  s_ip[4];	//sender ip address

